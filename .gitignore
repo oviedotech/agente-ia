@@ -8,3 +8,5 @@ selftest/transcripts/
 selftest-run*.log
 selftest-run*.out
 selftest-final.out
+.env.example
+.env.example

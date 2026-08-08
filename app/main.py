@@ -28,6 +28,7 @@ from app.relay import RelayWorker
 from app.sender import SenderWorker
 from app.state import AppContext
 from app.turn import handle_flush
+from app.internal import router as internal_router
 from app.webhook import router as webhook_router
 
 logging.basicConfig(
@@ -102,6 +103,7 @@ def create_app(ctx: AppContext | None = None) -> FastAPI:
     if ctx is not None:
         _wire_coalescer(ctx)
     app.include_router(webhook_router)
+    app.include_router(internal_router)
 
     @app.get("/health")
     async def health(request: Request):  # type: ignore[no-untyped-def]

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     verify_token: str = ""
     meta_app_secret: str = ""  # vacío = no se verifica la firma (dev)
 
+    # Endpoint interno (CRM → Nea): secreto compartido para POST /internal/inbound
+    internal_crm_secret: str = ""
+
     # CRM (vocero-crm, bot gateway /api/bot/*)
     crm_base_url: str = "http://localhost:3000"
     crm_webhook_url: str = ""  # incluye el segmento del verify token del CRM
