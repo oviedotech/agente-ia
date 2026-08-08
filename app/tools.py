@@ -118,6 +118,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+TOOL_SCHEMAS_NO_SCHEDULING: list[dict[str, Any]] = [
+    s for s in TOOL_SCHEMAS if s["function"]["name"] not in ("propose_slots", "book_session")
+]
+
+
 def _iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 

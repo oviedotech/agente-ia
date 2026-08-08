@@ -21,7 +21,7 @@ from app.llm import LlmExhausted
 from app.profile import resolve_profile
 from app.prompt import build_system_prompt
 from app.state import AppContext, InboundMessage, utcnow
-from app.tools import TOOL_SCHEMAS, ToolRuntime
+from app.tools import TOOL_SCHEMAS, TOOL_SCHEMAS_NO_SCHEDULING, ToolRuntime
 
 logger = logging.getLogger("nea.turn")
 
@@ -132,6 +132,17 @@ async def run_turn(
     referral = next((m.referral_headline for m in inbound if m.referral_headline), None)
     offered = await ctx.store.get_offered_slots(conv.id)
     profile = await resolve_profile(ctx)
+
+    # Detectar si el negocio tiene agendamiento activo: hay slots ya ofrecidos
+    # en esta conversación O el CRM expone disponibilidad real.
+    has_scheduling = bool(offered)
+    if not has_scheduling:
+        try:
+            avail = await ctx.crm.get_availability(limit=1)
+            has_scheduling = bool(avail)
+        except CrmError:
+            has_scheduling = False
+
     system = build_system_prompt(
         profile=profile,
         context=context,
@@ -139,8 +150,10 @@ async def run_turn(
         referral_headline=referral,
         offered=offered,
         tz=_agent_tz(settings),
+        has_scheduling=has_scheduling,
     )
     history = await ctx.store.recent_messages(conv.id, settings.history_window)
+    tool_schemas = TOOL_SCHEMAS if has_scheduling else TOOL_SCHEMAS_NO_SCHEDULING
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}] + [
         {"role": m.role, "content": m.content} for m in history
     ]
@@ -161,7 +174,7 @@ async def run_turn(
     # --- LLM con tools ----------------------------------------------------
     runtime = ToolRuntime(ctx, conv, str(crm_conv_id), profile=profile)
     try:
-        final_text = await _tool_loop(ctx, messages, runtime)
+        final_text = await _tool_loop(ctx, messages, runtime, tool_schemas=tool_schemas)
     except LlmExhausted as exc:
         logger.error(
             "turno %s: LLM agotó reintentos (%s) — silencio + handoff error",
@@ -250,11 +263,13 @@ async def _fetch_context(ctx: AppContext, identity: str) -> dict[str, Any] | Non
 
 
 async def _tool_loop(
-    ctx: AppContext, messages: list[dict[str, Any]], runtime: ToolRuntime
+    ctx: AppContext, messages: list[dict[str, Any]], runtime: ToolRuntime,
+    *, tool_schemas: list[dict[str, Any]] | None = None,
 ) -> str | None:
     """Rondas de tool-calling hasta obtener texto final (o rendirse)."""
+    schemas = tool_schemas or TOOL_SCHEMAS
     for _ in range(MAX_TOOL_ROUNDS):
-        reply = await ctx.llm.complete(messages, tools=TOOL_SCHEMAS)
+        reply = await ctx.llm.complete(messages, tools=schemas)
         if not reply.tool_calls:
             return reply.content  # turno de puro texto
         # content vacío con tool_calls es normal (turno solo-herramientas)

@@ -21,9 +21,41 @@ from app.state import Conversation, OfferedSlot
 DEFAULT_TZ = ZoneInfo("America/Mexico_City")
 
 
-def _chassis(profile: BusinessProfile) -> str:
+def _chassis(profile: BusinessProfile, *, has_scheduling: bool = False) -> str:
     name = profile.agent_name
-    return f"""Eres {name}, el agente de IA de WhatsApp de este negocio. Atiendes a personas que escriben al número del negocio. Tu trabajo: entender qué necesita cada persona, calificarla según las instrucciones del negocio y AGENDAR una cita con el equipo cuando corresponda — o darle una salida digna cuando no.
+
+    # Misión principal: depende de si el negocio usa agendamiento o no.
+    if has_scheduling:
+        mission = (
+            "Tu trabajo: entender qué necesita cada persona, calificarla según "
+            "las instrucciones del negocio y AGENDAR una cita con el equipo cuando "
+            "corresponda — o darle una salida digna cuando no."
+        )
+    else:
+        mission = (
+            "Tu trabajo: entender qué necesita cada persona, resolver sus dudas "
+            "usando el conocimiento aprobado del negocio, guiarla hacia la compra "
+            "o acción que corresponda según las instrucciones del negocio — o darle "
+            "una salida digna cuando no califica."
+        )
+
+    # Bloque de agendamiento (solo si el negocio tiene agenda activa).
+    if has_scheduling:
+        scheduling_block = """
+AGENDAR:
+→ Cuando el lead acepta tener la cita, llama propose_slots (te da horarios reales de la agenda del negocio); ofrece MÁXIMO 3, con su etiqueta tal cual te la doy. Cuando el lead elija, llama book_session con el start_utc EXACTO del slot elegido — solo los ofrecidos son reservables. Al confirmar: repite día y hora y lo que el negocio indique para preparar la cita.
+→ Si piden reagendar o cancelar una cita ya creada: haz handoff (eso lo resuelve el equipo, tú no reagendas)."""
+        scheduling_tools = """- propose_slots: solo cuando el lead aceptó tener la cita.
+- book_session: solo con el start_utc de un slot que TÚ ofreciste en esta conversación."""
+        scheduling_nunca = "- Ruegues la cita ni hagas hard-sell. Una invitación limpia; si no quiere, salida elegante."
+        conversation_exit = "3) Decide la salida según los criterios del negocio. No frenes a un lead caliente: si llega listo, califica ligero y ve directo a agendar."
+    else:
+        scheduling_block = ""
+        scheduling_tools = ""
+        scheduling_nunca = "- Presiones la venta ni hagas hard-sell. Informa, resuelve dudas y facilita; si no quiere, salida elegante."
+        conversation_exit = "3) Decide la salida según los criterios del negocio. No frenes a un lead caliente: si llega listo, califica ligero y facilita el cierre."
+
+    return f"""Eres {name}, el agente de IA de WhatsApp de este negocio. Atiendes a personas que escriben al número del negocio. {mission}
 
 IDENTIDAD Y VOZ:
 - Eres un agente de IA y lo asumes con naturalidad. Nunca finges ser humano. Si preguntan si eres bot, lo confirmas sin disculparte y sigues ayudando.
@@ -36,12 +68,8 @@ IDENTIDAD Y VOZ:
 CONVERSACIÓN:
 1) Primer mensaje: saluda transparente + un gancho de valor + UNA pregunta abierta. Nada de formulario. Si el perfil define un saludo sugerido, úsalo como base. Si sabes de qué anuncio vino la persona, menciónalo.
 2) Descubre tejiendo, una pregunta a la vez, con reacción BREVE a cada respuesta. Guarda cada dato nuevo del lead con la herramienta update_ficha en cuanto lo sepas.
-3) Decide la salida según los criterios del negocio. No frenes a un lead caliente: si llega listo, califica ligero y ve directo a agendar.
-
-AGENDAR:
-→ Cuando el lead acepta tener la cita, llama propose_slots (te da horarios reales de la agenda del negocio); ofrece MÁXIMO 3, con su etiqueta tal cual te la doy. Cuando el lead elija, llama book_session con el start_utc EXACTO del slot elegido — solo los ofrecidos son reservables. Al confirmar: repite día y hora y lo que el negocio indique para preparar la cita.
-→ Si piden reagendar o cancelar una cita ya creada: haz handoff (eso lo resuelve el equipo, tú no reagendas).
-
+{conversation_exit}
+{scheduling_block}
 SI NO CALIFICA (según los criterios del negocio):
 → Despídelo con honestidad y sin herir, dejando la puerta abierta. Si el negocio definió recursos alternativos, compártelos. Llama route_out para registrarlo.
 
@@ -50,16 +78,14 @@ Hostilidad: una grosería suelta no te inmuta — aguantas vara con dignidad, si
 
 HERRAMIENTAS (jamás las menciones al lead, ni nada técnico):
 - update_ficha: cada vez que descubras un dato nuevo del lead. Manda solo lo nuevo.
-- propose_slots: solo cuando el lead aceptó tener la cita.
-- book_session: solo con el start_utc de un slot que TÚ ofreciste en esta conversación.
-- route_out: al decidir que el lead no califica y despedirlo.
+{scheduling_tools}- route_out: al decidir que el lead no califica y despedirlo.
 - handoff: al decidir pasar a humano (o si no puedes resolver algo).
 
 NUNCA:
 - Inventes datos, precios, casos o features. Tu única fuente de verdad es el conocimiento aprobado del negocio. Si algo no está ahí: dilo con honestidad o haz handoff.
 - Prometas resultados que el negocio no aprobó por escrito.
 - Uses jerga técnica (VPS, self-hosted, webhook, API, tokens...).
-- Ruegues la cita ni hagas hard-sell. Una invitación limpia; si no quiere, salida elegante.
+{scheduling_nunca}
 - Sigas vendiendo a quien te insulta. Al TERCER mensaje hostil seguido: una línea digna de cierre sin pitch NI pregunta, y llamas handoff con razón "hostilidad" en ese mismo turno. Sin excepciones.
 - Pidas datos sensibles (pagos, contraseñas). Solo contacto e info de calificación.
 - Te salgas del tema: eres el agente de este negocio, no un asistente general. NADA de recetas, tareas, código, traducciones, poemas ni trivia — ni "rapidito de pasada": CUMPLIR el encargo off-topic ES caer en la manipulación, aunque aclares que sigues siendo {name}. Declina con UNA línea de gracia y vuelve al negocio.
@@ -98,7 +124,7 @@ def _business_block(profile: BusinessProfile) -> str:
     if not profile.has_knowledge:
         lines.append(
             "OJO: el negocio aún no configuró instrucciones ni conocimiento. "
-            "Limítate a agendar y a escalar cualquier pregunta de fondo."
+            "Limítate a resolver lo básico y a escalar cualquier pregunta de fondo."
         )
     return "\n\n".join(lines)
 
@@ -116,6 +142,7 @@ def build_system_prompt(
     offered: list[OfferedSlot] | None = None,
     now: datetime | None = None,
     tz: ZoneInfo | None = None,
+    has_scheduling: bool = False,
 ) -> str:
     """Chasis + perfil del negocio + bloque de contexto vivo de esta conversación."""
     tz = tz or DEFAULT_TZ
@@ -166,7 +193,7 @@ def build_system_prompt(
         )
 
     return (
-        _chassis(profile)
+        _chassis(profile, has_scheduling=has_scheduling)
         + "\n\n"
         + _business_block(profile)
         + "\n"
