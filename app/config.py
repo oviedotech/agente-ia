@@ -6,6 +6,7 @@ la validación de lo obligatorio ocurre al arranque real.
 """
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,6 +61,14 @@ class Settings(BaseSettings):
     # Infra
     database_url: str = ""
     port: int = 8000
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def _coerce_empty_port(cls, v: object) -> object:
+        """Render a veces inyecta PORT='' — tratar como ausente (usa default)."""
+        if isinstance(v, str) and v.strip() == "":
+            return 8000
+        return v
 
     # Desarrollo: loguear el JSON crudo de mensajes no-texto entrantes para
     # capturar los formatos reales de Meta (spec 002). Apagar al terminar.
