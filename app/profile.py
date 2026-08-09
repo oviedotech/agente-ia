@@ -53,23 +53,60 @@ class BusinessProfile:
 
 
 def profile_from_payload(payload: dict[str, Any], default_name: str) -> BusinessProfile:
-    """Construye el perfil desde la respuesta del CRM, tolerante a ausencias."""
-    prof = payload.get("profile") or {}
-    resources_raw = payload.get("resources") or []
-    kb_text = payload.get("kb") or None
+    """Construye el perfil desde la respuesta del CRM, tolerante a ausencias.
+
+    El CRM (vocero-crm Next.js) devuelve campos en español:
+      agent.nombre, agent.tono, agent.saludo, instrucciones,
+      base_conocimiento, escalado.reglas, recursos_alternativos[].
+    Fallback: si algún día llega el formato legacy en inglés (profile.name, etc.)
+    también lo acepta para no romper en transición.
+    """
+    # --- Formato actual del CRM (español) ---
+    agent = payload.get("agent") or {}
+    escalado = payload.get("escalado") or {}
+    resources_raw = payload.get("recursos_alternativos") or []
+    kb_text = payload.get("base_conocimiento") or None
+
+    # --- Fallback legacy (inglés, por si acaso) ---
+    if not agent and payload.get("profile"):
+        prof = payload["profile"]
+        agent = {
+            "nombre": prof.get("name"),
+            "tono": prof.get("tone"),
+            "saludo": prof.get("greeting"),
+        }
+        if not kb_text:
+            kb_text = payload.get("kb") or None
+        if not escalado:
+            escalado = {"reglas": prof.get("escalationRules")}
+        if not resources_raw:
+            resources_raw = payload.get("resources") or []
+
     if isinstance(kb_text, str) and kb_text.strip() == EMPTY_KB_SENTINEL:
         kb_text = None
-    resources = [
-        {"label": str(r.get("label") or r.get("url") or ""), "url": str(r.get("url") or "")}
-        for r in resources_raw
-        if isinstance(r, dict) and r.get("url")
-    ]
+
+    # Instrucciones: top-level en español, fallback a profile.instructions legacy
+    instructions = payload.get("instrucciones") or None
+    if not instructions and payload.get("profile"):
+        instructions = payload["profile"].get("instructions") or None
+
+    # Recursos: formato español {tipo, valor, etiqueta} → interno {label, url}
+    resources = []
+    for r in resources_raw:
+        if not isinstance(r, dict):
+            continue
+        # Formato español
+        url = r.get("valor") or r.get("url") or ""
+        label = r.get("etiqueta") or r.get("label") or url
+        if url:
+            resources.append({"label": str(label), "url": str(url)})
+
     return BusinessProfile(
-        agent_name=str(prof.get("name") or default_name),
-        tone=prof.get("tone") or None,
-        instructions=prof.get("instructions") or None,
-        escalation_rules=prof.get("escalationRules") or None,
-        greeting=prof.get("greeting") or None,
+        agent_name=str(agent.get("nombre") or default_name),
+        tone=agent.get("tono") or None,
+        instructions=instructions,
+        escalation_rules=escalado.get("reglas") or None,
+        greeting=agent.get("saludo") or None,
         kb_text=kb_text,
         resources=resources,
     )
