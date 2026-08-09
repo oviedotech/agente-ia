@@ -25,22 +25,39 @@ class Coalescer:
     def add(self, identity: str, item: Any) -> None:
         """Acumula un mensaje y (re)inicia el timer de la identidad."""
         self._buffers.setdefault(identity, []).append(item)
+        buf_len = len(self._buffers[identity])
         timer = self._timers.get(identity)
         if timer is not None and not timer.done():
             timer.cancel()  # mensaje nuevo → el reloj vuelve a empezar
+            logger.info(
+                "DIAG-COALESCE: %s msg #%d — timer reiniciado (%.1fs)",
+                identity, buf_len, self._seconds,
+            )
+        else:
+            logger.info(
+                "DIAG-COALESCE: %s msg #%d — timer NUEVO armado (%.1fs)",
+                identity, buf_len, self._seconds,
+            )
         self._timers[identity] = asyncio.create_task(self._fire(identity))
 
     async def _fire(self, identity: str) -> None:
         try:
             await asyncio.sleep(self._seconds)
         except asyncio.CancelledError:
+            logger.info("DIAG-COALESCE: %s timer CANCELADO (ráfaga continúa)", identity)
             return  # reiniciado por un mensaje nuevo
         items = self._buffers.pop(identity, [])
         self._timers.pop(identity, None)
         if not items:
+            logger.warning("DIAG-COALESCE: %s timer venció pero buffer VACÍO — no-op", identity)
             return
+        logger.info(
+            "DIAG-COALESCE: %s timer DISPARADO — flushing %d mensaje(s) a run_turn",
+            identity, len(items),
+        )
         try:
             await self._on_flush(identity, items)
+            logger.info("DIAG-COALESCE: %s flush COMPLETADO exitosamente", identity)
         except Exception:
             # El turno jamás debe tumbar el loop (Constitución IV).
             logger.exception("coalesce: el turno de %s falló", identity)

@@ -44,8 +44,10 @@ def _agent_tz(settings: Any) -> ZoneInfo:
 
 async def handle_flush(ctx: AppContext, identity: str, items: list[Any]) -> None:
     """Callback del coalescer — nunca propaga excepciones."""
+    logger.info("DIAG-TURN: handle_flush INICIO para %s con %d items", identity, len(items))
     try:
         await run_turn(ctx, identity, items)
+        logger.info("DIAG-TURN: handle_flush FIN OK para %s", identity)
     except Exception:
         logger.exception("turno de %s reventó — silencio", identity)
 
@@ -75,6 +77,7 @@ async def run_turn(
         return
 
     # --- Gate 2: contexto del CRM (aiEnabled, ventana) --------------------
+    logger.info("DIAG-TURN: %s gate CRM — pidiendo contexto...", identity)
     context = await _fetch_context(ctx, identity)
     if context is None:
         logger.warning("turno %s: sin contexto del CRM — silencio", identity)
@@ -90,6 +93,10 @@ async def run_turn(
     if not conversation_info.get("windowOpen", False):
         logger.info("turno %s: ventana de 24 h cerrada — silencio", identity)
         return
+    logger.info(
+        "DIAG-TURN: %s gates pasados — crm_conv_id=%s, aiEnabled=True, windowOpen=True",
+        identity, crm_conv_id,
+    )
 
     await ctx.store.update_conversation(
         conv.id,
@@ -214,7 +221,9 @@ async def run_turn(
     # --- Enviar la respuesta (SIEMPRE vía el CRM, nunca Meta directo) -----
     sent = False
     if final_text and final_text.strip():
+        logger.info("DIAG-TURN: %s enviando respuesta (%d chars)...", identity, len(final_text.strip()))
         sent = await _send(ctx, conv.id, str(crm_conv_id), final_text.strip())
+        logger.info("DIAG-TURN: %s envío resultado: sent=%s", identity, sent)
         if sent:
             await ctx.store.add_message(conv.id, "assistant", final_text.strip())
 
