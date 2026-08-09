@@ -105,6 +105,11 @@ class CrmClient:
         """Agent profile + knowledge base del negocio; None si el CRM no lo
         expone todavía (404) — el bot cae al brief local (app/profile.py)."""
         resp = await self._request("GET", "/api/bot/profile")
+        logger.info(
+            "DIAG-CRM: GET /api/bot/profile → status=%d, body=%s",
+            resp.status_code,
+            resp.text[:300] if resp.status_code != 200 else f"({len(resp.text)} bytes OK)",
+        )
         if resp.status_code == 404:
             return None
         if resp.status_code != 200:

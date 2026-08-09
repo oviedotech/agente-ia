@@ -116,36 +116,58 @@ class ProfileProvider:
     async def get(self) -> BusinessProfile:
         now = time.monotonic()
         if self._cached is not None and (now - self._fetched_at) < self._ttl:
+            age = now - self._fetched_at
+            logger.info(
+                "DIAG-PROFILE: cache HIT (age=%.1fs, ttl=%.1fs, has_knowledge=%s)",
+                age, self._ttl, self._cached.has_knowledge,
+            )
             return self._cached
 
+        logger.info("DIAG-PROFILE: cache MISS — llamando GET /api/bot/profile")
         payload = None
         try:
             payload = await self._crm.get_profile()
         except CrmError as exc:
-            logger.warning("perfil: el CRM no respondió (%s) — uso el último conocido", exc)
+            logger.warning(
+                "DIAG-PROFILE: CRM ERROR al llamar get_profile: %s", exc
+            )
         except AttributeError:
+            logger.warning("DIAG-PROFILE: cliente CRM sin get_profile (tests?)")
             payload = None  # cliente sin get_profile (tests viejos): fallback
 
         if payload is not None:
             self._cached = profile_from_payload(payload, self._default_name)
             self._fetched_at = now
+            logger.info(
+                "DIAG-PROFILE: fetch OK — agent_name=%r, has_knowledge=%s, "
+                "instructions=%d chars, kb=%d chars",
+                self._cached.agent_name,
+                self._cached.has_knowledge,
+                len(self._cached.instructions or ""),
+                len(self._cached.kb_text or ""),
+            )
             return self._cached
 
         # CRM sin perfil (404) o caído: último conocido > brief local > mínimo.
         if self._cached is not None:
             self._fetched_at = now  # no martillar al CRM caído en cada turno
+            logger.info(
+                "DIAG-PROFILE: payload=None pero tengo cache previo — sirvo cache "
+                "(has_knowledge=%s)", self._cached.has_knowledge,
+            )
             return self._cached
         if self._brief_path is not None:
             brief = profile_from_brief(self._brief_path, self._default_name)
             if brief is not None:
                 self._cached = brief
                 self._fetched_at = now
-                logger.info("perfil: usando brief local %s", self._brief_path)
+                logger.info("DIAG-PROFILE: usando brief local %s", self._brief_path)
                 return brief
         if not self._warned_minimal:
             logger.warning(
-                "perfil: sin agent profile en el CRM ni BRIEF_PATH legible — "
-                "el agente corre con el perfil mínimo (configura uno de los dos)"
+                "DIAG-PROFILE: ⚠️ SIN PERFIL — ni CRM, ni cache previo, ni brief. "
+                "El agente corre con perfil MÍNIMO (has_knowledge=False). "
+                "Esto causa respuestas genéricas."
             )
             self._warned_minimal = True
         self._cached = BusinessProfile(agent_name=self._default_name)

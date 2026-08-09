@@ -152,6 +152,25 @@ async def run_turn(
         tz=_agent_tz(settings),
         has_scheduling=has_scheduling,
     )
+
+    # --- DIAG: confirmar qué perfil se usó y si el prompt tiene contenido ---
+    logger.info(
+        "DIAG-TURN: profile usado — agent_name=%r, has_knowledge=%s, "
+        "instructions=%d chars, kb=%d chars",
+        profile.agent_name,
+        profile.has_knowledge,
+        len(profile.instructions or ""),
+        len(profile.kb_text or ""),
+    )
+    if not profile.has_knowledge:
+        logger.warning(
+            "DIAG-TURN: ⚠️ PROMPT SIN CONOCIMIENTO DEL NEGOCIO — el LLM "
+            "responderá genéricamente. Revisar CRM_BOT_API_KEY y CRM_BASE_URL."
+        )
+    # Log primeros 500 chars del system prompt para verificar contenido
+    logger.info("DIAG-TURN: system prompt (primeros 500 chars del bloque negocio): %s",
+                system[system.find("PERFIL DEL NEGOCIO"):system.find("PERFIL DEL NEGOCIO") + 500]
+                if "PERFIL DEL NEGOCIO" in system else "NO ENCONTRADO")
     history = await ctx.store.recent_messages(conv.id, settings.history_window)
     tool_schemas = TOOL_SCHEMAS if has_scheduling else TOOL_SCHEMAS_NO_SCHEDULING
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}] + [
